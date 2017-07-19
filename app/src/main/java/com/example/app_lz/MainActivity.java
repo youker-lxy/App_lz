@@ -1,6 +1,12 @@
 package com.example.app_lz;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -18,6 +24,7 @@ import com.google.gson.Gson;
 import com.suke.widget.SwitchButton;
 
 import Util.HttpUtil;
+import Util.MutilClickUtil;
 import Util.VibratorUtil;
 import gson.SensorBean;
 
@@ -33,11 +40,15 @@ public class MainActivity extends AppCompatActivity implements SwitchButton.OnCh
     private Button intro_btn;
     private Button conn_btn;
 
+    private SwipeRefreshLayout swipeRefreshLayout;
+
     private Handler handler;
     private int HumiEarthData;
     private int HumiAirData;
 
-    private SwipeRefreshLayout swipeRefreshLayout;
+    private IntentFilter intentFilter;
+    private NetworkChangeReceiver networkChangeReceiver;
+
 //    private String Url_Get = "http://api.heclouds.com/devices/9080309/datapoints";
 //    private String Url_Post = "http://api.heclouds.com/devices/9080309/datapoints?type=5";
 
@@ -63,29 +74,35 @@ public class MainActivity extends AppCompatActivity implements SwitchButton.OnCh
         tv_humi_air = (TextView) findViewById(R.id.air_text);
         tv_p = (TextView)findViewById(R.id.p_text);
         tv_d = (TextView)findViewById(R.id.d_text);
-
         p_btn = (SwitchButton) findViewById(R.id.p_switch_bt);
         d_btn = (SwitchButton) findViewById(R.id.d_switch_bt);
         intro_btn = (Button) findViewById(R.id.intro_btn);
         conn_btn = (Button) findViewById(R.id.connet_btn);
-
         swipeRefreshLayout = (SwipeRefreshLayout) findViewById(R.id.swipe_refresh);
         //下拉进度条颜色
         swipeRefreshLayout.setColorSchemeColors(getResources().getColor(R.color.colorPrimary));
 
-//        Handle();
         Handler_yee();
         swipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
             @Override
             public void onRefresh() {
-                Toast.makeText(MainActivity.this, "刷新数据中...", Toast.LENGTH_SHORT).show();
-                refreshData();
+                if (!isOnline()){
+                    Toast.makeText(MainActivity.this, "网络未连接，请先连接网络！", Toast.LENGTH_SHORT).show();
+                    swipeRefreshLayout.setRefreshing(false);
+                }
+                else {
+                    Toast.makeText(MainActivity.this, "刷新数据中...", Toast.LENGTH_SHORT).show();
+                    refreshData();
+                }
             }
         });
         p_btn.setOnCheckedChangeListener(this);
         d_btn.setOnCheckedChangeListener(this);
 
-        sendRequest_Get_WithOkHttp_yee();
+        NetworkChange();
+        if (isOnline()){
+            sendRequest_Get_WithOkHttp_yee();
+        }
     }
 
     public void Handler_yee(){
@@ -101,6 +118,43 @@ public class MainActivity extends AppCompatActivity implements SwitchButton.OnCh
                 }
             }
         };
+    }
+
+    //监测网络变化
+    public void NetworkChange(){
+        intentFilter = new IntentFilter();
+        intentFilter.addAction("android.net.conn.CONNECTIVITY_CHANGE");
+        networkChangeReceiver = new NetworkChangeReceiver();
+        registerReceiver(networkChangeReceiver, intentFilter);
+    }
+
+    //将动态注册的广播接收器 取消注册
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        unregisterReceiver(networkChangeReceiver);
+    }
+
+    //内部类继承至广播接收器 监听网络变化的广播 并做处理
+    class NetworkChangeReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            NetworkInfo networkInfo = connectivityManager.getActiveNetworkInfo();
+            if(networkInfo != null && networkInfo.isAvailable()){
+                Toast.makeText(context, "网络已连接", Toast.LENGTH_SHORT).show();
+            }
+            else{
+                Toast.makeText(context, "网络已断开", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    //判断是否联网
+    public boolean isOnline() {
+        ConnectivityManager connMgr = (ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo networkInfo = connMgr.getActiveNetworkInfo();
+        return (networkInfo != null && networkInfo.isConnected());
     }
 
     private void sendRequest_Get_WithOkHttp_yee(){
@@ -184,23 +238,17 @@ public class MainActivity extends AppCompatActivity implements SwitchButton.OnCh
         }).start();
     }
 
-//    public void Handle(){
-//        handler = new Handler() {
-//            @Override
-//            public void handleMessage(Message msg) {
-//                if (msg.what == 1) {
-//                    //UI操作
-//                    tv_req.setText("请求状态：" + getStatus());
-//                    tv_temp.setText("温度："+getTempData()+"℃");
-//                    tv_humi_air.setText("空气湿度："+getHumiAirData()+"%");
-//                    tv_humi_earth.setText("土壤湿度："+getHumiEarthData()+"%");
-//                }
-//            }
-//        };
-//    }
     @Override
     public void onCheckedChanged(SwitchButton view, boolean isChecked) {
-        if (view.getId() == R.id.d_switch_bt){
+        if (!isOnline()){
+            Toast.makeText(MainActivity.this, "网络未连接，请先连接网络！", Toast.LENGTH_LONG).show();
+        }
+        else if (!MutilClickUtil.isNormalClick()){
+            //添加操作频率限制 5秒
+            Toast.makeText(MainActivity.this, "操作频率过快", Toast.LENGTH_SHORT).show();
+        }
+        else if (view.getId() == R.id.d_switch_bt)
+        {
             VibratorUtil.Vibrate(MainActivity.this, 50);
             if(!isChecked)
             {
@@ -220,9 +268,9 @@ public class MainActivity extends AppCompatActivity implements SwitchButton.OnCh
                 //yeelink
                 sendRequest_Post_WithOkHttp_yee("410166", "1");
             }
-            Toast.makeText(MainActivity.this, "已点击滴灌开关!", Toast.LENGTH_SHORT).show();
+            //Toast.makeText(MainActivity.this, "已点击滴灌开关!", Toast.LENGTH_SHORT).show();
         }
-        if(view.getId() == R.id.p_switch_bt)
+        else if(view.getId() == R.id.p_switch_bt)
         {
             VibratorUtil.Vibrate(MainActivity.this, 50);
             if(!isChecked)
@@ -243,7 +291,7 @@ public class MainActivity extends AppCompatActivity implements SwitchButton.OnCh
                 //yeelink
                 sendRequest_Post_WithOkHttp_yee("410167", "1");
             }
-            Toast.makeText(MainActivity.this, "已点击喷雾开关!", Toast.LENGTH_SHORT).show();
+            //Toast.makeText(MainActivity.this, "已点击喷雾开关!", Toast.LENGTH_SHORT).show();
         }
 
     }
